@@ -1,43 +1,92 @@
+const http = require("http");
 const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
+const socketIo = require("socket.io");
 const cors = require('cors');
-
-const PORT =  process.env.PORT||3000;
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, { cors: { origin: "*" } });
-app.use(cors());
 
+const PORT = 3000;
+app.use(cors());
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log('Server running on port ${PORT}');
 });
 
-io.on('connection', (socket) => {
+const users = [];
+const io = socketIo(server, { cors: { origin: "*" } });
+io.on("connection", (socket) => {
     console.log('A user connected:', socket.id);
-  
-    socket.on('join room', (roomId) => {
-      socket.join(roomId);
-      console.log(`User ${socket.id} joined room ${roomId}`);
-    });
-  
-    socket.on('offer', (offer, roomId) => {
-      socket.to(roomId).emit('offer', offer);
-    });
-  
-    socket.on('answer', (answer, roomId) => {
-      socket.to(roomId).emit('answer', answer);
-    });
-  
-    socket.on('ice candidate', (candidate, roomId) => {
-      socket.to(roomId).emit('ice candidate', candidate);
-    });
-  
-    socket.on('disconnect', () => {
-      console.log('User disconnected:', socket.id);
-    });
-  });
-  
 
+    socket.on("message", (data) => {
+        const user = findUser(data.name);
 
+        switch(data.type) {
+            case "store_user":
+                if (user !== undefined) {
+                    socket.emit("user_already_exists", { type: "user already exists" });
+                    return;
+                }
+                const newUser = {
+                    name: data.name,
+                    socket: socket
+                };
+                users.push(newUser);
+                break;
+
+            case "start_call":
+                const userToCall = findUser(data.target);
+                console.log('user:${socket.id}')
+
+                if (userToCall) {
+                    console.log("call");
+                    socket.emit("call_response", { type: "call_response", data: "user is ready for call" });
+                } else {
+                    console.log("not online ");
+                    socket.emit("call_response", {type: "call_response", data: "user is not online"});
+                }
+                break;
+
+            case "create_offer":
+                console.log('entered to create an offer')
+                const userToReceiveOffer = findUser(data.target);
+                if (userToReceiveOffer) {
+                    socket.to(userToReceiveOffer.socket.id).emit("offer_received", { type: "offer_received", name: data.name, data: data.data.sdp });
+                }
+                break;
+
+            case "create_answer":
+                const userToReceiveAnswer = findUser(data.target);
+                if (userToReceiveAnswer) {
+                   socket.to(userToReceiveAnswer.socket.id).emit("answer_received", { type: "answer_received", name: data.name, data: data.data.sdp });
+                }
+                break;
+
+            case "ice_candidate":
+                const userToReceiveIceCandidate = findUser(data.target);
+                if (userToReceiveIceCandidate) {
+                    socket.to(userToReceiveIceCandidate.socket.id).emit("ice_candidate", {
+                        type: "ice_candidate",
+                        name: data.name,
+                        data: {
+                            sdpMLineIndex: data.data.sdpMLineIndex,
+                            sdpMid: data.data.sdpMid,
+                            sdpCandidate: data.data.sdpCandidate
+                        }
+                    });
+                }
+                break;
+        }
+    });
+
+    socket.on("disconnect", () => {
+        console.log('User disconnected:', socket.id);
+        const index = users.findIndex(user => user.socket === socket);
+        if (index !== -1) {
+            users.splice(index, 1);
+        }
+    });
+});
+
+const findUser = (username) => {
+    return users.find(user => user.name === username);
+};
